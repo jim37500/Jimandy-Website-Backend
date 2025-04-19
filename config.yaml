@@ -1,0 +1,2 @@
+# CONNECTIONSTRING: host=localhost port=5432 dbname=jimandy_website user=postgres connect_timeout=10 sslmode=prefer
+CONNECTIONSTRING: postgresql://neondb_owner:npg_ZcQxszvn5X2F@ep-misty-leaf-a1kia46l-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
