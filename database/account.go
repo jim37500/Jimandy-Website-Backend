@@ -20,3 +20,8 @@ func GetAccountByEmail(email string) (account model.Account) {
 func AddAccount(account model.Account) bool {
 	return db.Save(&account).Error == nil
 }
+
+// 更新帳號
+func UpdateAccount(account *model.Account) bool {
+	return db.Save(account).Error == nil
+}

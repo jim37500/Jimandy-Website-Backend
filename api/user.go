@@ -13,7 +13,7 @@ func GetCurrentUser(context *fiber.Ctx) error {
 	account := database.GetAccountByID(id)
 
 	return context.JSON(fiber.Map{
-		"Token":   GenerateToken(&account),
+		"Token":   GenerateTokens(&account, context),
 		"Account": account,
 		"Athlete": database.GetAthleteByAccountID(uint(id)),
 	})
