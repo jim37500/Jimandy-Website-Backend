@@ -2,9 +2,17 @@ package utils
 
 import "time"
 
+var taipeiLoc *time.Location
+
+func init() {
+	var err error
+	taipeiLoc, err = time.LoadLocation("Asia/Taipei")
+	if err != nil {
+		panic(err)
+	}
+}
+
 // 取得當前時區
 func GetCurrentTime() time.Time {
-	now := time.Now()
-	_, offset := now.Zone()
-	return now.Add(time.Duration(offset) * time.Second)
+	return time.Now().In(taipeiLoc)
 }
