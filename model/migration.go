@@ -10,8 +10,7 @@ func AutoMigrate(db *gorm.DB) {
 	migrateTable(db, &Athlete{})
 	migrateTable(db, &Activity{})
 	migrateTable(db, &Lap{})
-	migrateTable(db, &AccessToken{})
-	migrateTable(db, &RefreshToken{})
+	migrateTable(db, &Token{})
 
 	checkTableData(db)
 }

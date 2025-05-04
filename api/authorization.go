@@ -10,13 +10,14 @@ import (
 	"Jimandy-Website-Backend/data"
 	"Jimandy-Website-Backend/database"
 	"Jimandy-Website-Backend/model"
+	"Jimandy-Website-Backend/utils"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 )
 
-// 權杖預設逾時
-const (
+var (
+	// 權杖預設逾時
 	accessTokenExpireDuration  = time.Hour * 24 * 7      // 1小時
 	refreshTokenExpireDuration = time.Hour * 24 * 7 * 30 // 一個月
 )
@@ -71,8 +72,8 @@ func Login(context *fiber.Ctx) error {
 	return context.JSON(GenerateTokens(&account, context))
 }
 
-func setAccessToken(account *model.Account, deviceInfo string) string {
-	now := time.Now()
+func setAccessToken(account *model.Account) string {
+	now := utils.GetCurrentTime()
 	// 產生 access token
 	accessClaims := jwt.MapClaims{
 		"id":  account.ID,
@@ -82,23 +83,11 @@ func setAccessToken(account *model.Account, deviceInfo string) string {
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
 	signedAccessToken, _ := accessToken.SignedString(configuration.JWTKey)
 
-	// 儲存 access token 到資料庫
-	myAccessToken := model.AccessToken{
-		AccountID:   account.ID,
-		AccessToken: signedAccessToken,
-		DeviceInfo:  deviceInfo,
-		CreatedAt:   now,
-		ExpiresAt:   now.Add(accessTokenExpireDuration),
-	}
-
-	if database.SaveAccessToken(&myAccessToken) {
-		return signedAccessToken
-	}
-	return ""
+	return signedAccessToken
 }
 
-func setRefreshToken(account *model.Account, deviceInfo string) string {
-	now := time.Now()
+func setRefreshToken(account *model.Account) string {
+	now := utils.GetCurrentTime()
 	// 產生 refresh token
 	refreshClaims := jwt.MapClaims{
 		"id":  account.ID,
@@ -108,28 +97,35 @@ func setRefreshToken(account *model.Account, deviceInfo string) string {
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
 	signedRefreshToken, _ := refreshToken.SignedString(configuration.JWTKey)
 
-	// 儲存 refresh token 到資料庫
-	myRefreshToken := model.RefreshToken{
-		AccountID:    account.ID,
-		RefreshToken: signedRefreshToken,
-		DeviceInfo:   deviceInfo,
-		CreatedAt:    now,
-		ExpiresAt:    now.Add(refreshTokenExpireDuration),
-	}
-	if database.SaveRefreshToken(&myRefreshToken) {
-		return signedRefreshToken
-	}
-	return ""
+	return signedRefreshToken
 }
 
 // 產生權杖
 func GenerateTokens(account *model.Account, context *fiber.Ctx) fiber.Map {
 	deviceInfo := getDeviceInfo(context)
+	now := utils.GetCurrentTime()
 
-	return fiber.Map{
-		"accessToken":  setAccessToken(account, deviceInfo),
-		"refreshToken": setRefreshToken(account, deviceInfo),
+	// 產生 tokens
+	accessToken := setAccessToken(account)
+	refreshToken := setRefreshToken(account)
+
+	// 儲存 tokens 到資料庫
+	myToken := model.Token{
+		AccountID:    account.ID,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		DeviceInfo:   deviceInfo,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(accessTokenExpireDuration),
 	}
+
+	if database.SaveTokens(&myToken) {
+		return fiber.Map{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+		}
+	}
+	return fiber.Map{}
 }
 
 // 刷新 access token
@@ -140,8 +136,8 @@ func RefreshToken(context *fiber.Ctx) error {
 	}
 
 	// 檢查 refresh token 是否有效
-	dbToken := database.GetRefreshTokenByToken(refreshToken)
-	if dbToken == nil || dbToken.IsRevoked || time.Now().After(dbToken.ExpiresAt) {
+	dbToken := database.GetTokenByRefreshToken(refreshToken)
+	if dbToken == nil || dbToken.IsRevoked || utils.GetCurrentTime().After(dbToken.ExpiresAt) {
 		return context.SendStatus(fiber.StatusUnauthorized)
 	}
 
@@ -152,7 +148,9 @@ func RefreshToken(context *fiber.Ctx) error {
 	}
 
 	// 生成新的 access token
-	signedAccessToken := setAccessToken(&account, dbToken.DeviceInfo)
+	signedAccessToken := setAccessToken(&account)
+	dbToken.AccessToken = signedAccessToken
+	database.SaveTokens(dbToken)
 
 	return context.JSON(fiber.Map{
 		"accessToken": signedAccessToken,
@@ -167,21 +165,21 @@ func Logout(context *fiber.Ctx) error {
 	}
 
 	// 檢查 refresh token 是否有效
-	dbToken := database.GetRefreshTokenByToken(refreshToken)
+	dbToken := database.GetTokenByRefreshToken(refreshToken)
 	if dbToken == nil || dbToken.IsRevoked {
 		return context.SendStatus(fiber.StatusUnauthorized)
 	}
 
 	// 撤銷當前的 refresh token
 	dbToken.IsRevoked = true
-	database.SaveRefreshToken(dbToken)
+	database.SaveTokens(dbToken)
 
 	// 撤銷對應的 access token
-	accessTokens := database.GetUserAccessTokens(dbToken.AccountID)
+	accessTokens := database.GetUserTokens(dbToken.AccountID)
 	for _, token := range accessTokens {
 		if token.DeviceInfo == dbToken.DeviceInfo {
 			token.IsRevoked = true
-			database.SaveAccessToken(&token)
+			database.SaveTokens(&token)
 		}
 	}
 
@@ -195,7 +193,7 @@ func IsTokenValid(token string) bool {
 	}
 
 	// 檢查 token 是否在資料庫中且未撤銷
-	dbToken := database.GetAccessTokenByToken(token)
+	dbToken := database.GetTokenByAccessToken(token)
 	if dbToken == nil || dbToken.IsRevoked || time.Now().After(dbToken.ExpiresAt) {
 		return false
 	}
@@ -206,7 +204,7 @@ func IsTokenValid(token string) bool {
 // 取得用戶的所有裝置
 func GetUserDevices(context *fiber.Ctx) error {
 	accountID := uint(context.Locals("id").(float64))
-	devices := database.GetUserAccessTokens(accountID)
+	devices := database.GetUserTokens(accountID)
 
 	var deviceList []fiber.Map
 	for _, token := range devices {
@@ -229,28 +227,19 @@ func LogoutDevice(context *fiber.Ctx) error {
 	}
 
 	// 檢查 refresh token 是否有效
-	dbToken := database.GetRefreshTokenByToken(refreshToken)
+	dbToken := database.GetTokenByRefreshToken(refreshToken)
 	if dbToken == nil || dbToken.IsRevoked || time.Now().After(dbToken.ExpiresAt) {
 		return context.SendStatus(fiber.StatusUnauthorized)
 	}
 
 	deviceInfo := getDeviceInfo(context)
 
-	// 撤銷指定裝置的所有 access token
-	tokens := database.GetUserAccessTokens(dbToken.AccountID)
+	// 撤銷指定裝置的所有 token
+	tokens := database.GetUserTokens(dbToken.AccountID)
 	for _, token := range tokens {
 		if token.DeviceInfo == deviceInfo {
 			token.IsRevoked = true
-			database.SaveAccessToken(&token)
-		}
-	}
-
-	// 撤銷指定裝置的所有 refresh token
-	refreshTokens := database.GetUserRefreshTokens(dbToken.AccountID)
-	for _, token := range refreshTokens {
-		if token.DeviceInfo == deviceInfo {
-			token.IsRevoked = true
-			database.SaveRefreshToken(&token)
+			database.SaveTokens(&token)
 		}
 	}
 

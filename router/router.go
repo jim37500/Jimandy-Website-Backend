@@ -2,12 +2,12 @@ package router
 
 import (
 	"path/filepath"
-	"time"
 
 	"Jimandy-Website-Backend/api"
 	"Jimandy-Website-Backend/configuration"
 	"Jimandy-Website-Backend/data"
 	"Jimandy-Website-Backend/database"
+	"Jimandy-Website-Backend/utils"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -107,8 +107,8 @@ func jwtSuccessHandler(context *fiber.Ctx) error {
 	}
 
 	// 從資料庫獲取 token 信息
-	dbToken := database.GetAccessTokenByToken(token)
-	if dbToken == nil || dbToken.IsRevoked || time.Now().After(dbToken.ExpiresAt) {
+	dbToken := database.GetTokenByAccessToken(token)
+	if dbToken == nil || dbToken.IsRevoked || utils.GetCurrentTime().After(dbToken.ExpiresAt) {
 		return context.SendStatus(fiber.StatusUnauthorized)
 	}
 
